@@ -313,14 +313,15 @@ function setupSceneCulling(scene, roots, shadow = null) {
 
 const state = { culled: [] };
 
-// Per frame (after the warm-up frame, which must see everything): hide the chunks beyond their cull distance
-function updateSceneCulling(cameraPosition) {
+// Per frame (after the warm-up frame, which must see everything): hide the chunks beyond their cull distance (times
+// distanceScale: below 1 on GPUs that can't afford the full draw distance)
+function updateSceneCulling(cameraPosition, distanceScale = 1) {
   const { x, y, z } = cameraPosition;
   for (const c of state.culled) {
     const dx = c.x - x;
     const dy = c.y - y;
     const dz = c.z - z;
-    c.mesh.visible = Math.sqrt(dx * dx + dy * dy + dz * dz) - c.r < c.d;
+    c.mesh.visible = Math.sqrt(dx * dx + dy * dy + dz * dz) - c.r < c.d * distanceScale;
   }
 }
 

@@ -12,6 +12,7 @@ const {
   metalness,
   roughness,
   vec2,
+  vec4,
   smoothstep
 } = window.NYC.TSL;
 const { ssr } = window.NYC.PostFX;
@@ -50,19 +51,37 @@ async function initApp() {
     loadingStatus.textContent = `Initializing Three.js r${THREE.REVISION} WebGPURenderer & TSL Shaders...`;
   }
 
+  // Without a WebGPU adapter (e.g. Firefox on Linux) three.js falls back to WebGL 2, which usually means an older or
+  // integrated GPU: that path drops MSAA and SSR and draws its warm-up frame with culling on, since a single long frame
+  // there trips the driver's GPU watchdog and loses the context
+  const gpuAdapter = navigator.gpu ? await navigator.gpu.requestAdapter().catch(() => null) : null;
+  const lowTier = !gpuAdapter;
+  // Measured on an Intel HD 520 (Firefox, WebGL 2): the frame is GPU-bound on ~6M triangles and the procedural facade
+  // shaders. The sun shadow cascades re-draw ~2.5M of those triangles (9 -> 13 fps without them) and the shading
+  // scales with resolution (13 -> 20 fps at half); the small props are also hidden at half their usual distance
+  const LOW_TIER_PIXEL_RATIO = 0.5;
+  const LOW_TIER_CULL_SCALE = 0.5;
+
   // 1. Initialize Three.js WebGPURenderer with 32-bit float reversedDepthBuffer
   const renderer = new THREE.WebGPURenderer({
-    antialias: true,
+    antialias: !lowTier,
     powerPreference: 'high-performance',
     reversedDepthBuffer: true
   });
-  renderer.setPixelRatio(1.0);
+  renderer.setPixelRatio(lowTier ? LOW_TIER_PIXEL_RATIO : 1.0);
   renderer.setSize(window.innerWidth, window.innerHeight);
-  renderer.shadowMap.enabled = true;
+  renderer.shadowMap.enabled = !lowTier;
   if (ClusteredLighting) {
     renderer.lighting = new ClusteredLighting(256, 32, 28, 48);
   }
   container.appendChild(renderer.domElement);
+
+  // A lost device can't be recovered in place: say so on the loading screen rather than leaving a frozen frame
+  renderer.onDeviceLost = (info) => {
+    console.error(`THREE.WebGPURenderer: ${info.api} Device Lost:\n\nMessage: ${info.message}`, info.reason);
+    if (loadingOverlay) loadingOverlay.classList.remove('hidden');
+    if (loadingStatus) loadingStatus.textContent = `The GPU stopped responding (${info.api} device lost). Reload the page to try again.`;
+  };
 
   // Start-up phase timings (logged once as "[init] ...") to keep load-time regressions traceable
   let initTimings = [];
@@ -79,6 +98,7 @@ async function initApp() {
   // 2. Build Scene & Physical Atmospheric Sky / PMREM IBL / 4096x4096 Shadow Lighting
   const scene = new THREE.Scene();
   const lightingSystem = new LightingSystem(scene, renderer);
+  if (lowTier) lightingSystem.sunLight.castShadow = false;
   markInit('lighting');
 
   if (loadingStatus) {
@@ -126,9 +146,10 @@ async function initApp() {
 
   // Small InstancedMeshes (<= 1000 instances) keep their matrices in uniform buffers that three.js
   // re-uploads on every draw of every pass (~2.5 MB/frame with the shadow cascades, stalling the GPU queue).
-  // Storage attributes are only uploaded when instanceMatrix.needsUpdate is set.
+  // Storage attributes are only uploaded when instanceMatrix.needsUpdate is set. (Not on WebGL 2, which binds them as
+  // per-vertex attributes: the driver then rejects the draws as reading past the end of the buffer.)
   scene.traverse((object) => {
-    if (object.isInstancedMesh) {
+    if (object.isInstancedMesh && !lowTier) {
       object.instanceMatrix = new THREE.StorageInstancedBufferAttribute(object.instanceMatrix.array, 16);
     }
   });
@@ -140,35 +161,39 @@ async function initApp() {
   // them spares the GPU writing 3 x 4 samples per pixel to memory every frame (transient, memoryless attachments where
   // the browser supports them). The multisampled depth stays stored: SSR reads it.
   scenePass.renderTarget.storeMultisampledColorBuffer = false;
-  const ssrFade = smoothstep(360.0, 180.0, positionView.z.negate());
-  const sceneMRT = mrt({
-    output: output,
-    normal: normalView,
-    metalRough: vec2(metalness.mul(ssrFade), roughness)
-  });
-  sceneMRT.setBlendMode('normal', new THREE.BlendMode(THREE.MaterialBlending));
-  sceneMRT.setBlendMode('metalRough', new THREE.BlendMode(THREE.MaterialBlending));
-  scenePass.setMRT(sceneMRT);
-
   const scenePassColor = scenePass.getTextureNode('output');
-  const scenePassDepth = scenePass.getTextureNode('depth');
-  const scenePassNormal = scenePass.getTextureNode('normal');
-  const scenePassMetalRough = scenePass.getTextureNode('metalRough');
 
-  const ssrPass = ssr(scenePassColor, scenePassDepth, scenePassNormal, {
-    metalnessNode: scenePassMetalRough.r,
-    roughnessNode: scenePassMetalRough.g,
-    camera: cameraSystem.camera
-  });
-  ssrPass.resolutionScale = 0.5;
-  ssrPass.blurQuality = 1;
-  ssrPass.maxDistance.value = 42;
-  ssrPass.thickness.value = 0.85;
-  ssrPass.quality.value = 0.35;
-  ssrPass.intensity.value = 0.50;
-  ssrPass.screenEdgeFadeBlack = true;
+  let ssrPass = null;
+  if (!lowTier) {
+    const ssrFade = smoothstep(360.0, 180.0, positionView.z.negate());
+    const sceneMRT = mrt({
+      output: output,
+      normal: normalView,
+      metalRough: vec2(metalness.mul(ssrFade), roughness)
+    });
+    sceneMRT.setBlendMode('normal', new THREE.BlendMode(THREE.MaterialBlending));
+    sceneMRT.setBlendMode('metalRough', new THREE.BlendMode(THREE.MaterialBlending));
+    scenePass.setMRT(sceneMRT);
 
-  const colorGrade = createPostProcessing(renderer, scenePassColor, ssrPass);
+    const scenePassDepth = scenePass.getTextureNode('depth');
+    const scenePassNormal = scenePass.getTextureNode('normal');
+    const scenePassMetalRough = scenePass.getTextureNode('metalRough');
+
+    ssrPass = ssr(scenePassColor, scenePassDepth, scenePassNormal, {
+      metalnessNode: scenePassMetalRough.r,
+      roughnessNode: scenePassMetalRough.g,
+      camera: cameraSystem.camera
+    });
+    ssrPass.resolutionScale = 0.5;
+    ssrPass.blurQuality = 1;
+    ssrPass.maxDistance.value = 42;
+    ssrPass.thickness.value = 0.85;
+    ssrPass.quality.value = 0.35;
+    ssrPass.intensity.value = 0.50;
+    ssrPass.screenEdgeFadeBlack = true;
+  }
+
+  const colorGrade = createPostProcessing(renderer, scenePassColor, ssrPass || vec4(0));
   const { bloomPass } = colorGrade;
   const renderPipeline = new THREE.RenderPipeline(renderer, colorGrade.outputNode);
 
@@ -571,7 +596,7 @@ async function initApp() {
     });
 
     renderer.setRenderTarget(scenePass.renderTarget);
-    renderer.setMRT(sceneMRT);
+    renderer.setMRT(scenePass.getMRT());
     const compile = async (object) => {
       // Each compile starts in a task of its own: compileAsync() keeps one precompilation state on the renderer,
       // which must not be mid-step for two of them in the same microtask checkpoint
@@ -638,10 +663,10 @@ async function initApp() {
     if (streetDetails.update) streetDetails.update(cameraSystem.camera);
     lightingSystem.update(cameraSystem.currentPos);
     mapSystem.update();
-    if (warmedUp) updateSceneCulling(cameraSystem.camera.position); // the warm-up frame draws every chunk
+    if (warmedUp) updateSceneCulling(cameraSystem.camera.position, lowTier ? LOW_TIER_CULL_SCALE : 1); // the warm-up frame draws every chunk
 
     // Render frame via TSL RenderPipeline (SSR + Bloom)
-    if (!warmedUp) {
+    if (!warmedUp && !lowTier) {
       // First frame = pipeline warm-up behind the loading screen, for what precompileShaders() can't reach (the shadow
       // map passes): with frustum culling off, every visible material's pipelines compile now instead of stalling the
       // first time the camera turns towards it (one chunk / shadow stand-in per shared pipeline is enough)
@@ -665,7 +690,19 @@ async function initApp() {
       const device = renderer.backend.device;
       Promise.resolve(device && device.queue.onSubmittedWorkDone()).catch(() => {}).then(() => {
         markInit('gpu');
-        console.log(`[init] ${initTimings.join(', ')}`);
+        // Vertex / index / instance buffer footprint: the main GPU memory cost, and what runs out first on integrated GPUs
+        const buffers = new Set();
+        scene.traverse((o) => {
+          const g = o.geometry;
+          if (g) {
+            for (const attr of Object.values(g.attributes)) buffers.add((attr.data || attr).array);
+            if (g.index) buffers.add(g.index.array);
+          }
+          if (o.isInstancedMesh) buffers.add(o.instanceMatrix.array);
+        });
+        let bufferBytes = 0;
+        for (const array of buffers) bufferBytes += array.byteLength;
+        console.log(`[init] ${initTimings.join(', ')}, geometry ${Math.round(bufferBytes / 1048576)} MB, ${renderer.backend.isWebGLBackend ? 'WebGL 2' : 'WebGPU'}`);
         initTimings = null;
         if (loadingOverlay) loadingOverlay.classList.add('hidden');
         setLoadingProgress(1);
