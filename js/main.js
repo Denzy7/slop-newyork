@@ -119,6 +119,8 @@ async function initApp() {
 
   await renderer.init();
   markInit('renderer');
+  const elBackend = document.getElementById('hud-backend');
+  if (elBackend) elBackend.textContent = renderer.backend.isWebGLBackend ? 'WebGL 2' : 'WebGPU';
 
   // 2. Build Scene & Physical Atmospheric Sky / PMREM IBL / 4096x4096 Shadow Lighting
   const scene = new THREE.Scene();
