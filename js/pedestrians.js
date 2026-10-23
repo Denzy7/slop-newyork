@@ -18,12 +18,14 @@ const {
   Fn,
   float,
   int,
+  ivec2,
   vec2,
   vec3,
   color,
   attribute,
   instanceIndex,
   attributeArray,
+  textureLoad,
   normalLocal,
   varying,
   cross,
@@ -747,7 +749,7 @@ function pickColorFromPalette(hexArray, tNode) {
 const qrot = (q, v) => v.add(cross(q.xyz, cross(q.xyz, v).add(v.mul(q.w))).mul(2.0));
 
 /**
- * Material for one crowd mesh. `pose` is its storage buffer (STRIDE vec4s per instance). The vertex stage morphs the
+ * Material for one crowd mesh. `pose` is its pose buffer (STRIDE vec4s per instance). The vertex stage morphs the
  * bind pose (girth, female, hair) and skins it with two bones; the fragment stage dresses the person from their seed:
  * skin tone, hair & hairline, eyes, brows & mouth, a tailored jacket (lapels, shirt V) or casual coat (zip, hem,
  * collar), cuffs, trousers, sneakers or leather shoes with soles & laces.
@@ -894,6 +896,38 @@ function createPersonMaterial(pose) {
 // ============================================================================
 // 4. CROWD: ONE INSTANCED, SKINNED DRAW PER LEVEL OF DETAIL
 // ============================================================================
+/**
+ * The bone transforms of up to maxCount people, STRIDE vec4s each, read by index in the vertex stage. A storage buffer
+ * on WebGPU; WebGL 2 has none (three.js would bind it as a plain vertex attribute), so there it is a float texture
+ * with one person per row.
+ * @returns {{ array: Float32Array, element: (i: any) => any, upload: (count: number) => void }}
+ */
+function createPoseBuffer(maxCount) {
+  if (window.NYC.QUALITY && window.NYC.QUALITY.webgl) {
+    const array = new Float32Array(maxCount * STRIDE * 4);
+    const tex = new THREE.DataTexture(array, STRIDE, maxCount, THREE.RGBAFormat, THREE.FloatType);
+    tex.needsUpdate = true;
+    return {
+      array,
+      element: (i) => textureLoad(tex, ivec2(int(i).mod(STRIDE), int(i).div(STRIDE))),
+      upload: () => {
+        tex.needsUpdate = true;
+      }
+    };
+  }
+  const buffer = attributeArray(maxCount * STRIDE, 'vec4').toReadOnly();
+  const attr = buffer.value;
+  return {
+    array: attr.array,
+    element: (i) => buffer.element(i),
+    upload: (count) => {
+      attr.clearUpdateRanges();
+      attr.addUpdateRange(0, count * STRIDE * 4);
+      attr.needsUpdate = true;
+    }
+  };
+}
+
 class PersonCrowd {
   /**
    * @param {number} maxCount - most people drawn at once
@@ -902,7 +936,7 @@ class PersonCrowd {
   constructor(maxCount, { farDistance = 34, castShadow = true } = {}) {
     this.farDistance = farDistance;
     this.lods = [1, 0].map((detail) => {
-      const pose = attributeArray(maxCount * STRIDE, 'vec4').toReadOnly();
+      const pose = createPoseBuffer(maxCount);
       const mesh = new THREE.Mesh(buildPersonGeometry(detail), createPersonMaterial(pose));
       mesh.name = detail ? 'PeopleNear' : 'PeopleFar';
       mesh.count = 1; // one (degenerate) person until the first frame, so the pipelines compile up front
@@ -921,18 +955,14 @@ class PersonCrowd {
   add(rig, distance = 0) {
     const l = this.lods[distance > this.farDistance ? 1 : 0];
     if (l.count >= l.max) return;
-    l.pose.value.array.set(rig.pose, l.count * STRIDE * 4);
+    l.pose.array.set(rig.pose, l.count * STRIDE * 4);
     l.count++;
   }
 
   end() {
     for (const l of this.lods) {
       l.mesh.count = l.count;
-      if (l.count === 0) continue;
-      const attr = l.pose.value;
-      attr.clearUpdateRanges();
-      attr.addUpdateRange(0, l.count * STRIDE * 4);
-      attr.needsUpdate = true;
+      if (l.count > 0) l.pose.upload(l.count);
     }
   }
 }

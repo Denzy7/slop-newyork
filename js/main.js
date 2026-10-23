@@ -84,7 +84,8 @@ async function initApp() {
   }
   // City detail is fixed when the city is built: read by the materials & builders (lite facades, fewer outer-borough
   // buildings, thinner traffic...)
-  window.NYC.QUALITY = { lite: settings.detail === 'low' };
+  // webgl: no storage buffers, so per-instance data that is read by index goes through data textures instead
+  window.NYC.QUALITY = { lite: settings.detail === 'low', webgl: lowTier };
 
   // 1. Initialize Three.js WebGPURenderer with 32-bit float reversedDepthBuffer
   const renderer = new THREE.WebGPURenderer({
