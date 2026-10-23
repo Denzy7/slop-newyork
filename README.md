@@ -2,6 +2,8 @@
 
 A New York City simulation built with [three.js](https://threejs.org/), WebGPURenderer, and TSL. Explore Manhattan on foot, by car, by bicycle, or by helicopter.
 
+[Try it live](https://denzy7.github.io/slop-newyork/)
+
 This is a fork of [mrdoob/slop-newyork](https://github.com/mrdoob/slop-newyork) ([live demo of the original](https://mrdoob.github.io/slop-newyork/)) that makes it playable on low-end GPUs and browsers without WebGPU:
 
 - A graphics settings menu (gear button): resolution, shadows, reflections, antialias, draw distance and city detail, saved per browser.
