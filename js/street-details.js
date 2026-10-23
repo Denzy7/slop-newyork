@@ -1011,6 +1011,14 @@ function buildStreetDetails(scene) {
       }
     }
   }
+  // Lite city detail (slow GPUs, see main.js): a little over half the trees (a street tree's pit goes with it)
+  if (window.NYC.QUALITY && window.NYC.QUALITY.lite) {
+    for (const list of [treePositions, sidewalkTreePositions]) {
+      let n = 0;
+      for (const t of list) if (hashPos(t.x, 9.7, t.z) < 0.55) list[n++] = t;
+      list.length = n;
+    }
+  }
   console.info(`[streetDetails] ${treePositions.length} trees (${sidewalkTreePositions.length} street trees)`);
 
   const grateMat = createTreeGrateMaterial();

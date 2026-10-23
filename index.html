@@ -10,7 +10,7 @@
   <script>
     // Download the city scripts while Three.js loads; execute them only after its imports are ready below.
     const nycAppScripts = (() => {
-      const assetVersion = '20261022-teleports';
+      const assetVersion = '20261022-lite';
       return [
         './js/nyc-geodata.js',
         './js/city-config.js',
@@ -49,7 +49,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:opsz,wght@14..32,400..800&amp;family=Overpass:wght@600;700&amp;display=swap" />
-  <link rel="stylesheet" href="./css/style.css?v=20261022-repo-link" />
+  <link rel="stylesheet" href="./css/style.css?v=20261022-settings" />
   <!-- three.js dev branch (builds committed to mrdoob/three.js@dev, served by jsDelivr) -->
   <script type="importmap">
     {
@@ -87,6 +87,7 @@
       <symbol id="i-locate" viewBox="0 0 24 24"><circle cx="12" cy="12" r="6.4"/><circle cx="12" cy="12" r="1.7" fill="currentColor"/><path d="M12 2.5v3.1M12 18.4v3.1M2.5 12h3.1M18.4 12h3.1"/></symbol>
       <symbol id="i-fit" viewBox="0 0 24 24"><path d="M4 9V4h5M15 4h5v5M20 15v5h-5M9 20H4v-5"/></symbol>
       <symbol id="i-search" viewBox="0 0 24 24"><circle cx="10.8" cy="10.8" r="6.3"/><path d="m20 20-4.6-4.6"/></symbol>
+      <symbol id="i-gear" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 13.5a7.6 7.6 0 0 0 0-3l2-1.6-2-3.4-2.4 1a7.4 7.4 0 0 0-2.6-1.5L14 2.5h-4l-.4 2.5A7.4 7.4 0 0 0 7 6.5l-2.4-1-2 3.4 2 1.6a7.6 7.6 0 0 0 0 3l-2 1.6 2 3.4 2.4-1a7.4 7.4 0 0 0 2.6 1.5l.4 2.5h4l.4-2.5a7.4 7.4 0 0 0 2.6-1.5l2.4 1 2-3.4-2-1.6z"/></symbol>
       <symbol id="i-close" viewBox="0 0 24 24"><path d="m6.5 6.5 11 11M17.5 6.5l-11 11"/></symbol>
     </defs>
   </svg>
@@ -142,6 +143,9 @@
       <button id="btn-open-map" class="tool-btn" type="button" title="Full New York City street map [M]">
         <svg class="icon" aria-hidden="true"><use href="#i-map"/></svg><span class="tool-label">Map</span><kbd>M</kbd>
       </button>
+      <button id="btn-settings" class="tool-btn icon-only" type="button" popovertarget="settings-popover" title="Graphics settings" aria-label="Graphics settings">
+        <svg class="icon" aria-hidden="true"><use href="#i-gear"/></svg>
+      </button>
       <span class="toolbar-divider" aria-hidden="true"></span>
       <button id="btn-toggle-hud" class="tool-btn icon-only" type="button" title="Clean view: hide the HUD [H]" aria-label="Hide HUD" aria-pressed="false">
         <svg class="icon icon-hide" aria-hidden="true"><use href="#i-eye"/></svg><svg class="icon icon-show" aria-hidden="true"><use href="#i-eye-off"/></svg>
@@ -160,6 +164,39 @@
     <button id="tp-flatiron" class="pop-item tp-btn" data-teleport="flatiron" type="button"><span class="pop-name">Flatiron Building</span><span class="pop-sub">5th Ave · Flatiron District</span></button>
     <button id="tp-centralpark" class="pop-item tp-btn" data-teleport="centralpark" type="button"><span class="pop-name">Central Park</span><span class="pop-sub">6th Ave · Central Park South</span></button>
     <button id="tp-owtc" class="pop-item tp-btn" data-teleport="owtc" type="button"><span class="pop-name">One World Trade Center</span><span class="pop-sub">Vesey St · Financial District</span></button>
+  </div>
+
+  <!-- Graphics Settings (native popover) -->
+  <div id="settings-popover" class="popover settings-popover" popover data-side="below" data-anchor="hud-toolbar" aria-label="Graphics settings">
+    <div class="pop-title">Graphics</div>
+    <div class="set-row">
+      <span class="set-label"><span class="pop-name">Resolution</span><span class="pop-sub">Rendered pixels; lower is faster</span></span>
+      <div class="seg-group" role="group" aria-label="Resolution"><button class="seg-opt" type="button" data-setting="resolution" data-value="0.5">50%</button><button class="seg-opt" type="button" data-setting="resolution" data-value="0.75">75%</button><button class="seg-opt" type="button" data-setting="resolution" data-value="1">100%</button></div>
+    </div>
+    <div class="set-row">
+      <span class="set-label"><span class="pop-name">Shadows</span><span class="pop-sub">Sun shadows</span></span>
+      <div class="seg-group" role="group" aria-label="Shadows"><button class="seg-opt" type="button" data-setting="shadows" data-value="false">Off</button><button class="seg-opt" type="button" data-setting="shadows" data-value="true">On</button></div>
+    </div>
+    <div class="set-row">
+      <span class="set-label"><span class="pop-name">Reflections</span><span class="pop-sub">Screen-space reflections</span></span>
+      <div class="seg-group" role="group" aria-label="Reflections"><button class="seg-opt" type="button" data-setting="reflections" data-value="false">Off</button><button class="seg-opt" type="button" data-setting="reflections" data-value="true">On</button></div>
+    </div>
+    <div class="set-row">
+      <span class="set-label"><span class="pop-name">Anti-aliasing</span><span class="pop-sub">4× MSAA</span></span>
+      <div class="seg-group" role="group" aria-label="Anti-aliasing"><button class="seg-opt" type="button" data-setting="antialias" data-value="false">Off</button><button class="seg-opt" type="button" data-setting="antialias" data-value="true">On</button></div>
+    </div>
+    <div class="set-row">
+      <span class="set-label"><span class="pop-name">Draw distance</span><span class="pop-sub">Street props</span></span>
+      <div class="seg-group" role="group" aria-label="Draw distance"><button class="seg-opt" type="button" data-setting="drawDistance" data-value="0.5">Near</button><button class="seg-opt" type="button" data-setting="drawDistance" data-value="1">Far</button></div>
+    </div>
+    <div class="set-row">
+      <span class="set-label"><span class="pop-name">City detail</span><span class="pop-sub">Facades, boroughs, traffic · reloads</span></span>
+      <div class="seg-group" role="group" aria-label="City detail"><button class="seg-opt" type="button" data-setting="detail" data-value="&quot;low&quot;">Low</button><button class="seg-opt" type="button" data-setting="detail" data-value="&quot;high&quot;">High</button></div>
+    </div>
+    <div class="set-footer">
+      <span id="settings-tier" class="pop-sub"></span>
+      <button id="settings-reset" class="set-reset" type="button">Reset</button>
+    </div>
   </div>
 
   <!-- Bottom-Left: Street-Name Signs & Live GPS Radar Minimap -->

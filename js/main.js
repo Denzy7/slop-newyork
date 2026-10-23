@@ -56,11 +56,35 @@ async function initApp() {
   // there trips the driver's GPU watchdog and loses the context
   const gpuAdapter = navigator.gpu ? await navigator.gpu.requestAdapter().catch(() => null) : null;
   const lowTier = !gpuAdapter;
-  // Measured on an Intel HD 520 (Firefox, WebGL 2): the frame is GPU-bound on ~6M triangles and the procedural facade
-  // shaders. The sun shadow cascades re-draw ~2.5M of those triangles (9 -> 13 fps without them) and the shading
-  // scales with resolution (13 -> 20 fps at half); the small props are also hidden at half their usual distance
-  const LOW_TIER_PIXEL_RATIO = 0.5;
-  const LOW_TIER_CULL_SCALE = 0.5;
+
+  // Graphics settings (settings popover), remembered per browser. The low tier defaults were measured on an Intel HD
+  // 520 (Firefox, WebGL 2): the frame is GPU-bound on ~6M triangles and the procedural facade shaders. The sun shadow
+  // cascades re-draw ~2.5M of those triangles (9 -> 13 fps without them), the shading scales with resolution (13 -> 20
+  // fps at half) and the small props are hidden at half their usual distance
+  const SETTINGS_KEY = 'nyc.graphics';
+  const DEFAULT_SETTINGS = lowTier
+    ? { resolution: 0.5, shadows: false, reflections: false, antialias: false, drawDistance: 0.5, detail: 'low' }
+    : { resolution: 1, shadows: true, reflections: true, antialias: true, drawDistance: 1, detail: 'high' };
+  const SETTING_VALUES = {
+    resolution: [0.5, 0.75, 1],
+    shadows: [false, true],
+    reflections: [false, true],
+    antialias: [false, true],
+    drawDistance: [0.5, 1],
+    detail: ['low', 'high']
+  };
+  const settings = { ...DEFAULT_SETTINGS };
+  try {
+    const saved = JSON.parse(localStorage.getItem(SETTINGS_KEY)) || {};
+    for (const key of Object.keys(SETTING_VALUES)) {
+      if (SETTING_VALUES[key].includes(saved[key])) settings[key] = saved[key];
+    }
+  } catch {
+    // no storage (private window, blocked site data): the defaults stand
+  }
+  // City detail is fixed when the city is built: read by the materials & builders (lite facades, fewer outer-borough
+  // buildings, thinner traffic...)
+  window.NYC.QUALITY = { lite: settings.detail === 'low' };
 
   // 1. Initialize Three.js WebGPURenderer with 32-bit float reversedDepthBuffer
   const renderer = new THREE.WebGPURenderer({
@@ -68,9 +92,9 @@ async function initApp() {
     powerPreference: 'high-performance',
     reversedDepthBuffer: true
   });
-  renderer.setPixelRatio(lowTier ? LOW_TIER_PIXEL_RATIO : 1.0);
+  renderer.setPixelRatio(settings.resolution);
   renderer.setSize(window.innerWidth, window.innerHeight);
-  renderer.shadowMap.enabled = !lowTier;
+  renderer.shadowMap.enabled = true;
   if (ClusteredLighting) {
     renderer.lighting = new ClusteredLighting(256, 32, 28, 48);
   }
@@ -98,7 +122,7 @@ async function initApp() {
   // 2. Build Scene & Physical Atmospheric Sky / PMREM IBL / 4096x4096 Shadow Lighting
   const scene = new THREE.Scene();
   const lightingSystem = new LightingSystem(scene, renderer);
-  if (lowTier) lightingSystem.sunLight.castShadow = false;
+  lightingSystem.sunLight.castShadow = settings.shadows;
   markInit('lighting');
 
   if (loadingStatus) {
@@ -156,24 +180,25 @@ async function initApp() {
 
   // 5. TSL RenderPipeline with Half-Res Screen Space Reflections (SSRNode), Bloom & Filmic Toning
   //    SSR skips pixels with zero metalness, so fading it out with distance spares the far facades
-  const scenePass = pass(scene, cameraSystem.camera);
+  const scenePass = pass(scene, cameraSystem.camera, { samples: settings.antialias ? 4 : 0 });
   // The multisampled colour attachments (output, normal, metalRough) only need resolving, never storing: discarding
   // them spares the GPU writing 3 x 4 samples per pixel to memory every frame (transient, memoryless attachments where
   // the browser supports them). The multisampled depth stays stored: SSR reads it.
   scenePass.renderTarget.storeMultisampledColorBuffer = false;
   const scenePassColor = scenePass.getTextureNode('output');
 
+  // SSR needs the normal & metal/rough attachments; built on first use, since the reflections can be switched off
   let ssrPass = null;
-  if (!lowTier) {
+  let sceneMRT = null;
+  function buildSSR() {
     const ssrFade = smoothstep(360.0, 180.0, positionView.z.negate());
-    const sceneMRT = mrt({
+    sceneMRT = mrt({
       output: output,
       normal: normalView,
       metalRough: vec2(metalness.mul(ssrFade), roughness)
     });
     sceneMRT.setBlendMode('normal', new THREE.BlendMode(THREE.MaterialBlending));
     sceneMRT.setBlendMode('metalRough', new THREE.BlendMode(THREE.MaterialBlending));
-    scenePass.setMRT(sceneMRT);
 
     const scenePassDepth = scenePass.getTextureNode('depth');
     const scenePassNormal = scenePass.getTextureNode('normal');
@@ -193,8 +218,23 @@ async function initApp() {
     ssrPass.screenEdgeFadeBlack = true;
   }
 
-  const colorGrade = createPostProcessing(renderer, scenePassColor, ssrPass || vec4(0));
-  const { bloomPass } = colorGrade;
+  // One colour grade (with its bloom) per reflections setting, each built on first use and kept in step with the time
+  // of day
+  const colorGrades = new Map();
+  function getColorGrade(reflections) {
+    if (!colorGrades.has(reflections)) {
+      if (reflections && !ssrPass) buildSSR();
+      const grade = createPostProcessing(renderer, scenePassColor, reflections ? ssrPass : vec4(0));
+      grade.applyPreset(lightingSystem.activePresetId);
+      colorGrades.set(reflections, grade);
+    }
+    return colorGrades.get(reflections);
+  }
+  // The scene pass's MRT is only ever extended: dropping attachments again breaks the materials compiled with them
+  // (no MRT: OutputStructNode loses its members; fewer: the scene colour comes out black), so once the reflections
+  // have been on, turning them off only skips the SSR pass until the next reload
+  let colorGrade = getColorGrade(settings.reflections);
+  if (sceneMRT) scenePass.setMRT(sceneMRT);
   const renderPipeline = new THREE.RenderPipeline(renderer, colorGrade.outputNode);
 
   // 6. Wire UI Controls (Strictly using safe DOM APIs: textContent, classList, addEventListener)
@@ -289,7 +329,7 @@ async function initApp() {
 
   function selectTime(timeId) {
     lightingSystem.applyPreset(timeId);
-    colorGrade.applyPreset(lightingSystem.activePresetId);
+    for (const grade of colorGrades.values()) grade.applyPreset(lightingSystem.activePresetId);
     timeButtons.forEach((btn) => {
       btn.classList.toggle('active', btn.getAttribute('data-time') === timeId);
     });
@@ -528,13 +568,71 @@ async function initApp() {
     loadingStatus.textContent = 'Compiling Shaders & Render Pipelines...';
   }
 
+  // Graphics settings: applied live (the shaders a change needs compile on the next frames), stored per browser
+  const settingButtons = document.querySelectorAll('[data-setting]');
+  function syncSettingButtons() {
+    settingButtons.forEach((btn) => {
+      const on = settings[btn.dataset.setting] === JSON.parse(btn.dataset.value);
+      btn.classList.toggle('active', on);
+      btn.setAttribute('aria-pressed', String(on));
+    });
+  }
+  function applySetting(key, value) {
+    if (!SETTING_VALUES[key] || !SETTING_VALUES[key].includes(value) || settings[key] === value) return;
+    settings[key] = value;
+    if (key === 'resolution') renderer.setPixelRatio(value);
+    if (key === 'shadows') lightingSystem.sunLight.castShadow = value;
+    if (key === 'reflections') {
+      colorGrade = getColorGrade(value);
+      if (value) scenePass.setMRT(sceneMRT);
+      renderPipeline.outputNode = colorGrade.outputNode;
+      renderPipeline.needsUpdate = true;
+    }
+    if (key === 'antialias') {
+      scenePass.options.samples = value ? 4 : 0;
+      renderPipeline.needsUpdate = true;
+    }
+    // drawDistance: read by updateSceneCulling every frame
+    try {
+      localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
+    } catch {
+      // not remembered, still applied
+    }
+    // City detail rebuilds the city: reload with the new setting (not applied when it couldn't be stored)
+    if (key === 'detail') location.reload();
+    syncSettingButtons();
+  }
+  settingButtons.forEach((btn) => {
+    btn.addEventListener('click', () => applySetting(btn.dataset.setting, JSON.parse(btn.dataset.value)));
+  });
+  const settingsResetBtn = document.getElementById('settings-reset');
+  if (settingsResetBtn) {
+    settingsResetBtn.addEventListener('click', () => {
+      for (const [key, value] of Object.entries(DEFAULT_SETTINGS)) applySetting(key, value);
+    });
+  }
+  const settingsTier = document.getElementById('settings-tier');
+  if (settingsTier) {
+    settingsTier.textContent = lowTier
+      ? 'WebGL 2 fallback detected: lighter defaults'
+      : 'WebGPU detected: full quality defaults';
+  }
+  syncSettingButtons();
+
   // Expose programmatic API for testing & inspection
   let currentFps = 60;
   window.__NYC_APP = {
     renderer,
     scene,
     renderPipeline,
-    postFX: { scenePass, ssrPass, bloomPass, colorGrade },
+    postFX: {
+      scenePass,
+      get ssrPass() { return ssrPass; },
+      get bloomPass() { return colorGrade.bloomPass; },
+      get colorGrade() { return colorGrade; }
+    },
+    settings,
+    applySetting,
     cullingStats,
     cityBlocks,
     quadtree: cityBlocks.quadtree,
@@ -663,7 +761,7 @@ async function initApp() {
     if (streetDetails.update) streetDetails.update(cameraSystem.camera);
     lightingSystem.update(cameraSystem.currentPos);
     mapSystem.update();
-    if (warmedUp) updateSceneCulling(cameraSystem.camera.position, lowTier ? LOW_TIER_CULL_SCALE : 1); // the warm-up frame draws every chunk
+    if (warmedUp) updateSceneCulling(cameraSystem.camera.position, settings.drawDistance); // the warm-up frame draws every chunk
 
     // Render frame via TSL RenderPipeline (SSR + Bloom)
     if (!warmedUp && !lowTier) {

@@ -1810,6 +1810,7 @@ function placeSignatureTowers(list) {
 }
 
 function generateBoroughBuildings() {
+  const lite = !!(window.NYC.QUALITY && window.NYC.QUALITY.lite);
   const list = [];
   const stats = {};
   placeSignatureTowers(list);
@@ -1841,8 +1842,10 @@ function generateBoroughBuildings() {
         if (!land || !BUILD_LANDS.has(land.id) || land.filler) continue;
         const lu = luAt(c.x, c.z);
         if (lu.park > 0.45 || lu.marsh > 0.45) continue;
-        // Thin out with distance (suburbs first); the ground shader carries the texture beyond
-        const keep = dM < 1000 ? 1 : 1 - smooth01((dM - 1000) / (MAX_BUILD_DIST - 1000)) * (0.93 + lu.suburb * 0.07);
+        // Thin out with distance (suburbs first); the ground shader carries the texture beyond. Lite city detail
+        // (slow GPUs, see main.js) builds about half of the blocks past the waterfronts
+        let keep = dM < 1000 ? 1 : 1 - smooth01((dM - 1000) / (MAX_BUILD_DIST - 1000)) * (0.93 + lu.suburb * 0.07);
+        if (lite && dM >= 1000) keep *= 0.5;
         if (rand() > keep) continue;
         generateBlock(list, zone, land, i, j, c, dM, lu, rand);
       }
@@ -2423,12 +2426,13 @@ function buildIslandTrees(group) {
       }
     }
   };
-  scatter(GOVERNORS_ISLAND_POLYGON, 900, 0.45);
-  scatter(LIBERTY_ISLAND_POLYGON, 60, 0.6);
-  scatter(ELLIS_ISLAND_POLYGON, 40, 0.6);
-  scatter(ROOSEVELT_ISLAND_POLYGON, 380, 0.3);
-  scatter(RANDALLS_ISLAND_POLYGON, 1200, 0.35);
-  if (MILL_ROCK_POLYGON && MILL_ROCK_POLYGON.length > 2) scatter(MILL_ROCK_POLYGON, 30, 0.3);
+  const n = window.NYC.QUALITY && window.NYC.QUALITY.lite ? 0.5 : 1; // lite city detail: half the trees
+  scatter(GOVERNORS_ISLAND_POLYGON, Math.round(900 * n), 0.45);
+  scatter(LIBERTY_ISLAND_POLYGON, Math.round(60 * n), 0.6);
+  scatter(ELLIS_ISLAND_POLYGON, Math.round(40 * n), 0.6);
+  scatter(ROOSEVELT_ISLAND_POLYGON, Math.round(380 * n), 0.3);
+  scatter(RANDALLS_ISLAND_POLYGON, Math.round(1200 * n), 0.35);
+  if (MILL_ROCK_POLYGON && MILL_ROCK_POLYGON.length > 2) scatter(MILL_ROCK_POLYGON, Math.round(30 * n), 0.3);
 
   const crownGeo = makeCanopyGeometry(77);
   const crownMat = new THREE.MeshStandardNodeMaterial({ roughness: 0.9, metalness: 0.0 });

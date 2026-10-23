@@ -17,6 +17,8 @@ const SHADOW_PROXY_LAYER = 3;
 const CULL_PER_METRE = 1100;
 const CULL_MIN = 300; // never closer: the shadow cascades reach ~300 m at street level
 const CULL_MAX = 2000; // beyond this the props are kept at any distance
+const FRUSTUM_CHUNK_MIN = 2000; // instances: island-wide meshes of big things this large are chunked for frustum culling
+const FRUSTUM_CELL = 1200;
 const PROXY_CELL = 500; // the far cascade spans ~400 m at street level: a cascade sees a few cells
 
 const _m = new THREE.Matrix4();
@@ -155,8 +157,11 @@ function setupSceneCulling(scene, roots, shadow = null) {
     const glow = mesh.material.isMeshBasicNodeMaterial || mesh.material.type === 'MeshBasicNodeMaterial' ? 3 : 1;
     let cullDist = Math.max(CULL_MIN, instanceSize(mesh) * CULL_PER_METRE * glow);
     if (cullDist > CULL_MAX) cullDist = Infinity;
-    const cell = Number.isFinite(cullDist) ? Math.min(600, Math.max(250, cullDist * 0.5)) : 0;
-    if (!cell) continue; // big things (sidewalk slabs, light pools...) stay whole: chunking them would only add draws
+    // Big things are never distance culled; the few big meshes (sidewalk slabs, light pools...) stay whole, as chunks
+    // would only add draws, but the island-wide sets of thousands (the facade boxes) are cut into wide cells for the
+    // view frustum to cull: drawn whole, every box on the island went through the GPU every frame
+    const cell = Number.isFinite(cullDist) ? Math.min(600, Math.max(250, cullDist * 0.5)) : mesh.count >= FRUSTUM_CHUNK_MIN ? FRUSTUM_CELL : 0;
+    if (!cell) continue;
     const parent = mesh.parent;
     const chunks = chunkInstancedMesh(mesh, cell);
     parent.remove(mesh);

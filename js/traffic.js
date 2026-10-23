@@ -37,9 +37,9 @@ const {
 const { PersonCrowd, PersonRig } = window.NYC;
 const { mergeGeometries } = window.NYC.Addons;
 
-const NUM_CARS = 200;
-const NUM_BUSES = 32;
-const NUM_PEDS = 340;
+const FULL_CARS = 200;
+const FULL_BUSES = 32;
+const FULL_PEDS = 340;
 
 // Intelligent Driver Model: max acceleration, comfortable braking, time headway, standstill gap; and the sideways
 // acceleration drivers accept in bends, which sets how fast they take each turn or lane shift
@@ -80,6 +80,11 @@ function createBusDestinationTexture() {
 const clamp = (x, lo, hi) => Math.max(lo, Math.min(hi, x));
 
 function createTrafficSystem(scene, sidewalks, obstacles) {
+  // Lite city detail (slow GPUs, see main.js): ~60% of the cars, buses & pedestrians
+  const lite = !!(window.NYC.QUALITY && window.NYC.QUALITY.lite);
+  const NUM_CARS = lite ? 120 : FULL_CARS;
+  const NUM_BUSES = lite ? 20 : FULL_BUSES;
+  const NUM_PEDS = lite ? 200 : FULL_PEDS;
   const group = new THREE.Group();
   group.name = 'ManhattanTrafficAndPedestrians';
 

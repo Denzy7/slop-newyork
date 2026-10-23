@@ -622,6 +622,85 @@ body.hud-minimized .icon-show {
   color: var(--text-3);
 }
 
+/* Graphics settings: one row per option, a segmented control on the right */
+.settings-popover {
+  min-width: 330px;
+}
+
+.set-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 7px 10px;
+}
+
+.set-label {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  font-size: 13px;
+  font-weight: 550;
+}
+
+.seg-group {
+  display: flex;
+  flex: none;
+  padding: 2px;
+  border-radius: 9px;
+  background: var(--hover);
+}
+
+.seg-opt {
+  min-width: 44px;
+  padding: 5px 9px;
+  border-radius: 7px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-2);
+  transition: background-color 0.15s ease, color 0.15s ease;
+}
+
+.seg-opt:hover {
+  color: var(--text);
+}
+
+.seg-opt.active {
+  background: var(--text);
+  color: #121314;
+}
+
+.set-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 5px;
+  padding: 10px 10px 6px;
+  border-top: 1px solid var(--divider);
+}
+
+.set-reset {
+  flex: none;
+  padding: 5px 10px;
+  border-radius: 7px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text);
+  background: var(--hover);
+}
+
+.set-reset:hover {
+  background: var(--glass-border);
+}
+
+body.touch-enabled .seg-opt { min-height: 40px; }
+
+@media (max-width: 420px) {
+  .settings-popover { min-width: 0; width: calc(100vw - 32px); }
+  .set-row { gap: 10px; }
+}
+
 /* ------------------------------------------------------------------------------------------------------------------
    Bottom left: NYC street-name signs over the GPS radar
    ------------------------------------------------------------------------------------------------------------------ */

@@ -469,6 +469,66 @@ function facadeCell(windowWidth, floorHeight, boxLocal, cornerPier = 0) {
 }
 
 /**
+ * Lite facade for slow GPUs (window.NYC.QUALITY.lite, see main.js), standing in for both the curtain-wall & pre-war
+ * materials with the same options: the same window grid, wall treatments & night glow, but flat walls and glazing
+ * instead of the interior mapping, brick coursing, bump relief, reflections & AC units.
+ */
+const _facadeLiteCache = new Map();
+function createFacadeLiteMaterial(kind, opts) {
+  const curtain = kind === 'curtain';
+  const {
+    windowWidth = curtain ? 2.8 : 2.7,
+    floorHeight = 3.8,
+    litProbability = 0.36,
+    warmth = curtain ? 0.62 : 0.82,
+    seed = curtain ? 1.0 : 42.0,
+    boxLocal = false,
+    cornerPier = 1.2
+  } = opts;
+  const wallHex = curtain ? (opts.frameTint ?? 0x26323e) : (opts.stoneColor ?? 0xd8ceb8);
+  const glassHex = curtain ? (opts.glassTint ?? 0x162c42) : (opts.windowGlassColor ?? 0x162432);
+  // Window opening as a fraction of the bay & storey (curtain walls: everything inside the mullions & spandrel)
+  const halfX = curtain ? 0.075 : (1.0 - (opts.windowRatioX ?? 0.5)) * 0.5;
+  const yLo = curtain ? 0.2 : (1.0 - (opts.windowRatioY ?? 0.58)) * 0.5;
+  const yHi = curtain ? 0.96 : 1.0 - yLo;
+
+  const cacheKey = `${kind}_${wallHex}_${glassHex}_${windowWidth}_${floorHeight}_${litProbability}_${warmth}_${seed}_${boxLocal}_${cornerPier}`;
+  if (_facadeLiteCache.has(cacheKey)) return _facadeLiteCache.get(cacheKey);
+
+  const mat = new THREE.MeshStandardNodeMaterial({ metalness: curtain ? 0.15 : 0.04, roughness: 0.8 });
+  // Uniforms, so every lite facade compiles to one shader per kind
+  const cWall = uniform(new THREE.Color(wallHex));
+  const cGlass = uniform(new THREE.Color(glassHex));
+  const uLitProbability = uniform(litProbability);
+  const uWarmth = uniform(warmth);
+  const uSeed = uniform(seed);
+
+  const facade = facadeCell(uniform(windowWidth), uniform(floorHeight), boxLocal, curtain ? 0 : cornerPier);
+  const { isRoof, cellId, cellUV, fw, isGroundFloor, solid, back, door, tone, coping } = facade;
+  const wall = float(1.0).sub(isRoof);
+  const glass = filteredPulse(cellUV.x, mix(float(halfX), float(0.06), isGroundFloor), mix(float(1.0 - halfX), float(0.94), isGroundFloor), fw.x)
+    .mul(filteredPulse(cellUV.y, mix(float(yLo), float(0.08), isGroundFloor), mix(float(yHi), float(0.84), isGroundFloor), fw.y))
+    .mul(wall).mul(float(1.0).sub(solid)).mul(float(1.0).sub(door)).mul(float(1.0).sub(coping));
+  const lit = step(float(1.0).sub(mix(uLitProbability, float(0.76), isGroundFloor)), hash2D(cellId.add(vec2(uSeed, 19.4))));
+  const warm = step(float(1.0).sub(uWarmth), hash2D(cellId.add(vec2(uSeed.mul(1.9), 83.1))));
+
+  mat.colorNode = Fn(() => {
+    // Rear & lot-line walls in common brick (red-brown or buff by building), street fronts in the style's colour
+    const backBrick = mix(color(0x7a4636), color(0xa48e70), step(0.58, tone));
+    const wallCol = curtain ? cWall : mix(cWall, backBrick, back);
+    const shade = hash2D(cellId.add(vec2(3.7, uSeed))).mul(0.08).add(0.96);
+    const facadeCol = mix(wallCol, cGlass.mul(shade).mul(0.75), glass);
+    return mix(facadeCol, color(0x6a645a), isRoof);
+  })();
+  mat.roughnessNode = mix(float(curtain ? 0.5 : 0.82), float(0.6), glass);
+  mat.emissiveNode = mix(color(0xcfe2ff), color(0xffcf86), warm)
+    .mul(lit).mul(glass).mul(cityUniforms.uInteriorGlow).mul(0.3);
+
+  _facadeLiteCache.set(cacheKey, mat);
+  return mat;
+}
+
+/**
  * Curtain-Wall Glass Skyscraper TSL Material
  * Features:
  * - Mikkelsen `bumpNormal` 3D Mullion Relief & Per-Pane Thermal Glass Warble
@@ -489,6 +549,7 @@ function createCurtainWallMaterial(opts = {}) {
     seed = 1.0,
     boxLocal = false
   } = opts;
+  if (window.NYC.QUALITY && window.NYC.QUALITY.lite) return createFacadeLiteMaterial('curtain', opts);
 
   const cacheKey = `${glassTint}_${frameTint}_${windowWidth}_${floorHeight}_${litProbability}_${warmth}_${reflectivity}_${seed}_${boxLocal}`;
   if (_curtainWallCache.has(cacheKey)) {
@@ -688,6 +749,7 @@ function createPreWarBuildingMaterial(opts = {}) {
     boxLocal = false,
     cornerPier = 1.2 // solid masonry at both ends of every wall above the shopfronts (box-local mode)
   } = opts;
+  if (window.NYC.QUALITY && window.NYC.QUALITY.lite) return createFacadeLiteMaterial('prewar', opts);
 
   const cacheKey = `${stoneColor}_${trimColor}_${windowWidth}_${floorHeight}_${litProbability}_${warmth}_${crownGlowHeight}_${seed}_${boxLocal}_${cornerPier}`;
   if (_preWarCache.has(cacheKey)) {
